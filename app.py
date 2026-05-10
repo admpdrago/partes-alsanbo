@@ -2,23 +2,32 @@ import streamlit as st
 from fpdf import FPDF
 from datetime import datetime, time, timedelta
 import os
+import sqlite3
+import pandas as pd
 
-# --- CONFIGURACIÓN INICIAL ---
-st.set_page_config(page_title="Gestor de Partes Inteligente", page_icon="🛠️")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Gestión de Partes Pro", page_icon="🗄️", layout="wide")
 
-# Inicializamos la lista de materiales comunes en la memoria de la sesión
+# Inicializar Base de Datos
+def crear_db():
+    conn = sqlite3.connect('gestion_trabajos.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS partes 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  cliente TEXT, fecha TEXT, h_inicio TEXT, h_fin TEXT, 
+                  total_h REAL, tareas TEXT, materiales TEXT)''')
+    conn.commit()
+    conn.close()
+
+crear_db()
+
+# Inicializar materiales en sesión
 if 'mis_materiales' not in st.session_state:
-    st.session_state.mis_materiales = [
-        "Selecciona...", 
-        "Cable 1.5mm", 
-        "Cable 2.5mm", 
-        "Tubo Corrugado 20mm", 
-        "Otro (Escribir manualmente...)"
-    ]
+    st.session_state.mis_materiales = ["Selecciona...", "Cable 1.5mm", "Cable 2.5mm", "Tubo Corrugado 20mm", "Otro..."]
+if 'lista_mat_actual' not in st.session_state:
+    st.session_state.lista_mat_actual = []
 
-if 'lista_mat' not in st.session_state:
-    st.session_state.lista_mat = []
-
+# --- FUNCIONES ---
 def calcular_duracion(inicio, fin):
     hoy = datetime.today()
     dt_inicio = datetime.combine(hoy, inicio)
@@ -26,101 +35,72 @@ def calcular_duracion(inicio, fin):
     if dt_fin < dt_inicio: dt_fin += timedelta(days=1)
     return round((dt_fin - dt_inicio).total_seconds() / 3600, 2)
 
-if os.path.exists("logo.png"):
-    st.image("logo.png", width=120)
+def guardar_en_db(cliente, fecha, inicio, fin, total, tareas, materiales):
+    conn = sqlite3.connect('gestion_trabajos.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO partes (cliente, fecha, h_inicio, h_fin, total_h, tareas, materiales) VALUES (?,?,?,?,?,?,?)",
+              (cliente, str(fecha), str(inicio), str(fin), total, tareas, str(materiales)))
+    conn.commit()
+    conn.close()
 
-st.title("🛠️ Parte de Trabajo")
+# --- INTERFAZ ---
+st.sidebar.title("Menú")
+choice = st.sidebar.radio("Ir a:", ["📝 Nuevo Parte", "🗄️ Historial"])
 
-# --- FORMULARIO DATOS ---
-with st.expander("Datos del Trabajo", expanded=True):
-    cliente = st.text_input("Cliente / Obra")
-    fecha = st.date_input("Fecha", datetime.now())
-    c1, c2 = st.columns(2)
-    with c1: h_inicio = st.time_input("Inicio", time(8, 0))
-    with c2: h_fin = st.time_input("Fin", time(18, 0))
-    total_h = calcular_duracion(h_inicio, h_fin)
-    st.info(f"Horas: {total_h}")
-    tareas = st.text_area("Descripción del trabajo")
-
-st.divider()
-
-# --- MATERIALES CON AUTO-APRENDIZAJE ---
-st.subheader("📦 Materiales")
-
-seleccion = st.selectbox("Materiales guardados", st.session_state.mis_materiales)
-
-col1, col2, col3 = st.columns([1, 1, 2])
-with col1:
-    cant = st.number_input("Cant.", min_value=0.0, step=0.1, key="c")
-with col2:
-    unid = st.text_input("Unidad", value="uds", key="u")
-with col3:
-    # Lógica para escribir manual o usar el selector
-    if seleccion == "Otro (Escribir manualmente...)":
-        desc = st.text_input("Escribe el nuevo material", key="m_nuevo")
-    elif seleccion != "Selecciona...":
-        desc = st.text_input("Confirmar material", value=seleccion, key="m_conf")
-    else:
-        desc = ""
-
-if st.button("➕ Añadir y Guardar Material"):
-    if desc and desc != "Selecciona...":
-        # 1. Añadir a la lista del parte actual
-        st.session_state.lista_mat.append({"cantidad": cant, "unidad": unid, "material": desc})
-        
-        # 2. APRENDIZAJE: Si no estaba en el desplegable, lo añadimos para siempre (en esta sesión)
-        if desc not in st.session_state.mis_materiales:
-            # Insertamos antes de la opción "Otro"
-            st.session_state.mis_materiales.insert(-1, desc)
-            st.success(f"'{desc}' guardado en el desplegable")
-        
-        st.rerun() # Refrescamos para limpiar campos y actualizar lista
-    else:
-        st.error("Escribe o selecciona un material válido")
-
-if st.session_state.lista_mat:
-    st.table(st.session_state.lista_mat)
-    if st.button("🗑️ Vaciar lista actual"):
-        st.session_state.lista_mat = []
-        st.rerun()
-
-# --- GENERAR PDF ---
-def crear_pdf(cliente, fecha, h_inicio, h_fin, h_total, tareas, materiales):
-    pdf = FPDF()
-    pdf.add_page()
+if choice == "📝 Nuevo Parte":
     if os.path.exists("logo.png"):
-        pdf.image("logo.png", 10, 8, 40)
-        pdf.ln(25)
-    
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "PARTE DE TRABAJO", ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(30, 10, "Cliente:", 0); pdf.set_font("Arial", '', 12); pdf.cell(0, 10, str(cliente), ln=True)
-    pdf.set_font("Arial", 'B', 12); pdf.cell(30, 10, "Fecha:", 0); pdf.set_font("Arial", '', 12); pdf.cell(0, 10, str(fecha), ln=True)
-    pdf.set_font("Arial", 'B', 12); pdf.cell(30, 10, "Horario:", 0); pdf.set_font("Arial", '', 12); pdf.cell(0, 10, f"{h_inicio} a {h_fin} ({h_total}h)", ln=True)
-    
-    pdf.ln(10); pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Tareas realizadas:", ln=True)
-    pdf.set_font("Arial", '', 11); pdf.multi_cell(0, 7, tareas)
-    
-    if materiales:
-        pdf.ln(10); pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Materiales:", ln=True)
-        pdf.set_font("Arial", 'B', 10)
-        pdf.cell(25, 8, "Cant.", 1); pdf.cell(35, 8, "Unidad", 1); pdf.cell(0, 8, "Descripcion", 1, ln=True)
-        pdf.set_font("Arial", '', 10)
-        for m in materiales:
-            pdf.cell(25, 8, str(m['cantidad']), 1); pdf.cell(35, 8, m['unidad'], 1); pdf.cell(0, 8, m['material'], 1, ln=True)
-    
-    pdf.ln(20); pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, "Firma del tecnico / Conformidad", ln=True)
-    pdf.line(10, pdf.get_y(), 60, pdf.get_y())
-    return pdf.output(dest='S').encode('latin-1')
+        st.image("logo.png", width=120)
+    st.title("Nuevo Parte de Trabajo")
 
-st.divider()
-if st.button("💾 GENERAR PDF"):
-    if cliente:
-        pdf_out = crear_pdf(cliente, fecha, h_inicio, h_fin, total_h, tareas, st.session_state.lista_mat)
-        nombre_archivo = f"Parte_{fecha}_{cliente.replace(' ', '_')}.pdf"
-        st.download_button("⬇️ Descargar PDF", data=pdf_out, file_name=nombre_archivo)
+    with st.expander("1. Datos Generales", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            cliente = st.text_input("Cliente / Obra")
+            fecha = st.date_input("Fecha", datetime.now())
+        with col2:
+            h_inicio = st.time_input("Inicio", time(8, 0))
+            h_fin = st.time_input("Fin", time(18, 0))
+            total_h = calcular_duracion(h_inicio, h_fin)
+            st.write(f"**Total horas:** {total_h}")
+        
+        tareas = st.text_area("Descripción del trabajo")
+
+    with st.expander("2. Materiales"):
+        seleccion = st.selectbox("Elegir de la lista", st.session_state.mis_materiales)
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1: cant = st.number_input("Cant.", min_value=0.0, step=0.1)
+        with c2: unid = st.text_input("Unidad", value="uds")
+        with c3:
+            if seleccion == "Otro...":
+                desc = st.text_input("Nombre del material")
+            else:
+                desc = seleccion
+        
+        if st.button("➕ Añadir Material"):
+            if desc and desc != "Selecciona...":
+                st.session_state.lista_mat_actual.append({"cantidad": cant, "unidad": unid, "material": desc})
+                if desc not in st.session_state.mis_materiales:
+                    st.session_state.mis_materiales.insert(-1, desc)
+                st.rerun()
+
+        if st.session_state.lista_mat_actual:
+            st.table(st.session_state.lista_mat_actual)
+
+    if st.button("💾 GUARDAR TODO EN BASE DE DATOS"):
+        if cliente:
+            guardar_en_db(cliente, fecha, h_inicio, h_fin, total_h, tareas, st.session_state.lista_mat_actual)
+            st.success("¡Parte guardado con éxito! Puedes verlo en el Historial.")
+            st.session_state.lista_mat_actual = [] # Limpiar para el siguiente
+        else:
+            st.error("El nombre del cliente es obligatorio")
+
+elif choice == "🗄️ Historial":
+    st.title("Historial de Partes")
+    conn = sqlite3.connect('gestion_trabajos.db')
+    df = pd.read_sql_query("SELECT * FROM partes ORDER BY id DESC", conn)
+    conn.close()
+    
+    if not df.empty:
+        st.dataframe(df[['id', 'cliente', 'fecha', 'total_h', 'tareas']], use_container_width=True)
     else:
-        st.warning("Escribe el nombre del cliente")
+        st.info("No hay partes guardados todavía.")
