@@ -3,22 +3,21 @@ from fpdf import FPDF
 from datetime import datetime, time, timedelta
 import os
 
-# --- CONFIGURACIÓN Y LISTA DE MATERIALES ---
-# Aquí puedes añadir o quitar los materiales que más uses
-MATERIALES_COMUNES = [
-    "Selecciona un material...", 
-    "Cable 1.5mm", 
-    "Cable 2.5mm", 
-    "Tubo Corrugado 20mm", 
-    "Caja de registro",
-    "Mecanismo interruptor",
-    "Mecanismo enchufe",
-    "Taco 6mm",
-    "Tornillería",
-    "Otro (Escribir manualmente...)"
-]
+# --- CONFIGURACIÓN INICIAL ---
+st.set_page_config(page_title="Gestor de Partes Inteligente", page_icon="🛠️")
 
-st.set_page_config(page_title="Gestor de Partes", page_icon="🛠️")
+# Inicializamos la lista de materiales comunes en la memoria de la sesión
+if 'mis_materiales' not in st.session_state:
+    st.session_state.mis_materiales = [
+        "Selecciona...", 
+        "Cable 1.5mm", 
+        "Cable 2.5mm", 
+        "Tubo Corrugado 20mm", 
+        "Otro (Escribir manualmente...)"
+    ]
+
+if 'lista_mat' not in st.session_state:
+    st.session_state.lista_mat = []
 
 def calcular_duracion(inicio, fin):
     hoy = datetime.today()
@@ -27,33 +26,28 @@ def calcular_duracion(inicio, fin):
     if dt_fin < dt_inicio: dt_fin += timedelta(days=1)
     return round((dt_fin - dt_inicio).total_seconds() / 3600, 2)
 
-# Mostrar logo en la web si existe
 if os.path.exists("logo.png"):
     st.image("logo.png", width=120)
 
 st.title("🛠️ Parte de Trabajo")
 
-# --- FORMULARIO ---
+# --- FORMULARIO DATOS ---
 with st.expander("Datos del Trabajo", expanded=True):
     cliente = st.text_input("Cliente / Obra")
     fecha = st.date_input("Fecha", datetime.now())
-    
     c1, c2 = st.columns(2)
     with c1: h_inicio = st.time_input("Inicio", time(8, 0))
     with c2: h_fin = st.time_input("Fin", time(18, 0))
-    
     total_h = calcular_duracion(h_inicio, h_fin)
     st.info(f"Horas: {total_h}")
     tareas = st.text_area("Descripción del trabajo")
 
 st.divider()
 
-# --- MATERIALES CON DESPLEGABLE ---
+# --- MATERIALES CON AUTO-APRENDIZAJE ---
 st.subheader("📦 Materiales")
-if 'lista_mat' not in st.session_state:
-    st.session_state.lista_mat = []
 
-seleccion = st.selectbox("Elegir material común", MATERIALES_COMUNES)
+seleccion = st.selectbox("Materiales guardados", st.session_state.mis_materiales)
 
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
@@ -61,24 +55,34 @@ with col1:
 with col2:
     unid = st.text_input("Unidad", value="uds", key="u")
 with col3:
-    # Si elige "Otro", dejamos que escriba. Si no, ponemos lo del desplegable.
+    # Lógica para escribir manual o usar el selector
     if seleccion == "Otro (Escribir manualmente...)":
-        desc = st.text_input("Descripción", placeholder="Escribe el material...", key="m")
-    elif seleccion != "Selecciona un material...":
-        desc = st.text_input("Descripción", value=seleccion, key="m_select")
+        desc = st.text_input("Escribe el nuevo material", key="m_nuevo")
+    elif seleccion != "Selecciona...":
+        desc = st.text_input("Confirmar material", value=seleccion, key="m_conf")
     else:
-        desc = st.text_input("Descripción", placeholder="Selecciona o escribe", key="m_empty")
+        desc = ""
 
-if st.button("➕ Añadir a la lista"):
-    if desc and desc != "Selecciona un material...":
+if st.button("➕ Añadir y Guardar Material"):
+    if desc and desc != "Selecciona...":
+        # 1. Añadir a la lista del parte actual
         st.session_state.lista_mat.append({"cantidad": cant, "unidad": unid, "material": desc})
+        
+        # 2. APRENDIZAJE: Si no estaba en el desplegable, lo añadimos para siempre (en esta sesión)
+        if desc not in st.session_state.mis_materiales:
+            # Insertamos antes de la opción "Otro"
+            st.session_state.mis_materiales.insert(-1, desc)
+            st.success(f"'{desc}' guardado en el desplegable")
+        
+        st.rerun() # Refrescamos para limpiar campos y actualizar lista
     else:
-        st.error("Debes indicar un material")
+        st.error("Escribe o selecciona un material válido")
 
 if st.session_state.lista_mat:
     st.table(st.session_state.lista_mat)
-    if st.button("🗑️ Borrar lista"):
+    if st.button("🗑️ Vaciar lista actual"):
         st.session_state.lista_mat = []
+        st.rerun()
 
 # --- GENERAR PDF ---
 def crear_pdf(cliente, fecha, h_inicio, h_fin, h_total, tareas, materiales):
@@ -116,8 +120,7 @@ st.divider()
 if st.button("💾 GENERAR PDF"):
     if cliente:
         pdf_out = crear_pdf(cliente, fecha, h_inicio, h_fin, total_h, tareas, st.session_state.lista_mat)
-        # Nombre de archivo dinámico para que se ordenen solos
         nombre_archivo = f"Parte_{fecha}_{cliente.replace(' ', '_')}.pdf"
-        st.download_button("⬇️ Descargar y Guardar en Descargas", data=pdf_out, file_name=nombre_archivo)
+        st.download_button("⬇️ Descargar PDF", data=pdf_out, file_name=nombre_archivo)
     else:
-        st.warning("Pon el nombre del cliente")
+        st.warning("Escribe el nombre del cliente")
